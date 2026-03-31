@@ -1,0 +1,96 @@
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: integration-test-with-attestation
+  labels:
+    app.kubernetes.io/version: "0.1"
+spec:
+  description: |
+    Example task demonstrating how to use the create-test-result-attestation StepAction.
+    Runs a test, then creates a signed in-toto attestation for the results.
+
+  params:
+    - name: IMAGE_URL
+      type: string
+      description: The image URL that was built
+    - name: IMAGE_DIGEST
+      type: string
+      description: The image digest (sha256:...)
+    - name: TEST_NAME
+      type: string
+      description: Name of the test being run
+      default: "integration-test"
+
+  results:
+    - name: TEST_OUTPUT
+      description: JSON summary of the test results
+      type: string
+    - name: TEST_OUTPUT_ARTIFACT_OUTPUTS
+      description: |
+        Reference to the test-result attestation pushed to registry.
+        Tekton Chains will include this in the SLSA provenance attestation.
+      type: object
+      properties:
+        uri: {}
+        digest: {}
+
+  workspaces:
+    - name: cosign-keys
+      description: |
+        Workspace containing cosign.key for signing the attestation.
+        Mount from a Secret containing the signing key.
+
+  steps:
+    - name: run-test
+      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      env:
+        - name: IMAGE_URL
+          value: $(params.IMAGE_URL)
+        - name: IMAGE_DIGEST
+          value: $(params.IMAGE_DIGEST)
+        - name: TEST_NAME
+          value: $(params.TEST_NAME)
+      results:
+        - name: TEST_OUTPUT
+          description: JSON test output
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        echo "=== Running Test: ${TEST_NAME} ==="
+        echo "Image: ${IMAGE_URL}@${IMAGE_DIGEST}"
+
+        # ============================================================
+        # Replace this with actual test logic
+        # ============================================================
+        RESULT="PASSED"
+
+        TEST_OUTPUT=$(printf '{"result":"%s","timestamp":"%s","successes":1,"failures":0,"warnings":0}' \
+          "${RESULT}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
+
+        echo "Test result: ${RESULT}"
+        echo "${TEST_OUTPUT}" > "$(step.results.TEST_OUTPUT.path)"
+
+    - name: create-attestation
+      ref:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/<org>/stepaction-attest-test-result
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: stepactions/attest-test-result/0.1/attest-test-result.yaml
+      params:
+        - name: image-url
+          value: $(params.IMAGE_URL)
+        - name: image-digest
+          value: $(params.IMAGE_DIGEST)
+        - name: test-name
+          value: $(params.TEST_NAME)
+        - name: test-output
+          value: $(steps.run-test.results.TEST_OUTPUT)
+      env:
+        - name: COSIGN_KEY_PATH
+          value: $(workspaces.cosign-keys.path)/cosign.key
