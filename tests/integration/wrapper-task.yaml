@@ -1,0 +1,49 @@
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: test-attest-wrapper
+spec:
+  description: |
+    Wrapper Task for integration testing the create-test-result-attestation
+    StepAction. Passes params through and exposes the attestation result.
+
+  params:
+    - name: IMAGE_URL
+      type: string
+    - name: IMAGE_DIGEST
+      type: string
+    - name: TEST_NAME
+      type: string
+      default: "integration-test"
+    - name: TEST_OUTPUT
+      type: string
+      default: '{"result":"PASSED","successes":1,"failures":0,"warnings":0}'
+    - name: UPLOAD_TLOG
+      type: string
+      default: "false"
+
+  results:
+    - name: TEST_OUTPUT_ARTIFACT_OUTPUTS
+      type: string
+
+  workspaces:
+    - name: cosign-keys
+
+  steps:
+    - name: create-attestation
+      ref:
+        name: create-test-result-attestation
+      params:
+        - name: image-url
+          value: $(params.IMAGE_URL)
+        - name: image-digest
+          value: $(params.IMAGE_DIGEST)
+        - name: test-name
+          value: $(params.TEST_NAME)
+        - name: test-output
+          value: $(params.TEST_OUTPUT)
+        - name: upload-tlog
+          value: $(params.UPLOAD_TLOG)
+        - name: cosign-key-path
+          value: $(workspaces.cosign-keys.path)/cosign.key

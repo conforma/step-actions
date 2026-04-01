@@ -23,6 +23,8 @@ FAILURES=0
 
 for SPEC_DIR in "${SPEC_DIRS[@]}"; do
     [[ -z "${SPEC_DIR}" ]] && continue
+    # Skip integration tests — they require a Kind cluster; use hack/test-integration.sh
+    [[ "${SPEC_DIR}" == *"tests/integration"* ]] && continue
     echo -e "\n=== Running tests in \033[1m${SPEC_DIR}\033[0m ==="
     PARAMS=(--chdir "${SPEC_DIR}" --shell "${BIN_BASH}")
     [[ -n "${GITHUB_ACTIONS:-}" ]] && PARAMS+=(--format tap)
