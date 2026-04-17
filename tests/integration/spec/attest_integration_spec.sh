@@ -121,30 +121,23 @@ EOF
         --from-file=cosign.pub="${WORK_DIR}/cosign.pub" \
         --dry-run=client -o yaml | kubectl apply -f -
 
-    # --- Apply StepAction (override image, add cosign-key-path param) ---
-    # Tekton disallows setting env on steps that ref a StepAction, so
-    # COSIGN_KEY_PATH must be a StepAction param rather than a Task-level env.
-    # Also configure for insecure (HTTP-only) in-cluster registry:
-    #   - COSIGN_ALLOW_HTTP_REGISTRY env var for cosign
-    #   - --plain-http flag for oras discover
-    # NOTE: The sed swaps below change the cosign/oras invocations from their
-    # production form to work with the HTTP-only in-cluster registry:
-    #   --new-bundle-format → --allow-http-registry (cosign)
-    #   oras discover → oras discover --plain-http
-    # This means the integration test exercises a slightly different CLI
-    # invocation than production. The --new-bundle-format flag is tested in
-    # the unit tests via mock assertions.
+    # --- Apply StepAction (override image for local testing) ---
+    # The step-action already has cosign-key-path as a param.
+    # For local testing we need:
+    #   - Override the image to use the locally-built one
+    #   - Set COSIGN_PASSWORD so cosign doesn't prompt
+    #   - Add --allow-http-registry and --allow-insecure-registry for cosign
+    #   - Add --plain-http for oras discover
     yq '
       .spec.image = "localhost/attest-test-result:test" |
-      .spec.params += [{"name": "cosign-key-path", "type": "string", "description": "Path to cosign signing key"}] |
       .spec.env += [
-        {"name": "COSIGN_KEY_PATH", "value": "$(params.cosign-key-path)"},
         {"name": "COSIGN_PASSWORD", "value": ""},
         {"name": "COSIGN_ALLOW_HTTP_REGISTRY", "value": "true"}
       ]
     ' "${ROOT}/stepactions/attest-test-result/0.1/attest-test-result.yaml" \
         | sed -e 's/oras discover /oras discover --plain-http /g' \
-              -e 's/--new-bundle-format/--allow-http-registry/g' \
+              -e 's/--key "${COSIGN_KEY_PATH}"/--key "${COSIGN_KEY_PATH}" --allow-insecure-registry --allow-http-registry/g' \
+              -e 's/cosign tree /cosign tree --allow-http-registry --allow-insecure-registry /g' \
         | kubectl apply -f -
 
     # --- Apply wrapper Task ---

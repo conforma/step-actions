@@ -27,6 +27,9 @@ spec:
     - name: test-output
       type: string
       description: JSON test results to include in the attestation predicate
+    - name: cosign-key-path
+      type: string
+      description: Path to the cosign private key file for signing
     - name: predicate-type
       type: string
       description: In-toto predicate type URI
@@ -51,6 +54,8 @@ spec:
       value: $(params.test-name)
     - name: TEST_OUTPUT
       value: $(params.test-output)
+    - name: COSIGN_KEY_PATH
+      value: $(params.cosign-key-path)
     - name: PREDICATE_TYPE
       value: $(params.predicate-type)
     - name: UPLOAD_TLOG
@@ -70,7 +75,7 @@ spec:
     # Validate cosign key is available
     if [ -z "${COSIGN_KEY_PATH:-}" ] || [ ! -f "${COSIGN_KEY_PATH}" ]; then
       echo "ERROR: Cosign key not found. COSIGN_KEY_PATH='${COSIGN_KEY_PATH:-}'"
-      echo "The parent Task must mount a cosign-keys workspace and set COSIGN_KEY_PATH."
+      echo "The parent Task must mount a cosign-keys workspace and pass the path via the cosign-key-path param."
       write_empty_results
       exit 1
     fi
@@ -113,7 +118,6 @@ spec:
       attest -y
       --type "${PREDICATE_TYPE}"
       --predicate "${PREDICATE_FILE}"
-      --new-bundle-format
       --key "${COSIGN_KEY_PATH}"
     )
 
@@ -133,18 +137,26 @@ spec:
     cosign "${COSIGN_ARGS[@]}"
     echo ""
 
-    # Discover the attestation digest using oras discover (OCI referrers API)
+    # Discover the attestation digest
     echo "=== Discovering Attestation Digest ==="
+
+    # Try OCI referrers API first (works with OCI 1.1 registries)
     ATTESTATION_DIGEST=$(oras discover "${IMAGE_REF}" \
       --artifact-type "application/vnd.dev.cosign.artifact.sig.v1+json" \
       --format json 2>/dev/null \
       | jq -r '.manifests[0].digest // empty' || true)
 
     if [ -z "${ATTESTATION_DIGEST}" ]; then
-      # Fallback: try without artifact-type filter
       ATTESTATION_DIGEST=$(oras discover "${IMAGE_REF}" \
         --format json 2>/dev/null \
         | jq -r '.manifests[0].digest // empty' || true)
+    fi
+
+    # Fallback: cosign tag-based scheme (.att tag)
+    if [ -z "${ATTESTATION_DIGEST}" ]; then
+      echo "OCI referrers API returned no results, trying tag-based discovery..."
+      ATTESTATION_DIGEST=$(cosign tree "${IMAGE_REF}" 2>/dev/null \
+        | grep -oP 'sha256:[a-f0-9]{64}' | tail -1 || true)
     fi
 
     if [ -z "${ATTESTATION_DIGEST}" ]; then
