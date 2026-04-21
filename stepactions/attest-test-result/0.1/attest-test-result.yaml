@@ -7,13 +7,14 @@ metadata:
     app.kubernetes.io/version: "0.1"
   annotations:
     tekton.dev/pipelines.minVersion: "0.56.0"
-    tekton.dev/tags: "attestation, signing, in-toto, conforma"
+    tekton.dev/tags: "attestation, in-toto, conforma"
 spec:
   description: >-
-    Creates and pushes an in-toto test-result attestation to a container
-    registry using cosign. Signs with a cosign key from the parent Task's
-    workspace. Outputs a JSON artifact reference for Tekton Chains to include
-    in SLSA provenance.
+    Creates and pushes an unsigned in-toto test-result attestation to a
+    container registry using oras. The attestation is attached as an OCI
+    referrer and is discoverable via the referrers API. Trust is established
+    by the SLSA provenance that Tekton Chains creates for the attestation
+    via the ARTIFACT_OUTPUTS result.
   params:
     - name: image-url
       type: string
@@ -27,17 +28,10 @@ spec:
     - name: test-output
       type: string
       description: JSON test results to include in the attestation predicate
-    - name: cosign-key-path
-      type: string
-      description: Path to the cosign private key file for signing
     - name: predicate-type
       type: string
       description: In-toto predicate type URI
       default: "https://in-toto.io/attestation/test-result/v0.1"
-    - name: upload-tlog
-      type: string
-      description: Upload to Sigstore transparency log ("true" or "false")
-      default: "false"
   results:
     - name: TEST_OUTPUT_ARTIFACT_OUTPUTS
       description: >-
@@ -54,12 +48,8 @@ spec:
       value: $(params.test-name)
     - name: TEST_OUTPUT
       value: $(params.test-output)
-    - name: COSIGN_KEY_PATH
-      value: $(params.cosign-key-path)
     - name: PREDICATE_TYPE
       value: $(params.predicate-type)
-    - name: UPLOAD_TLOG
-      value: $(params.upload-tlog)
   script: |
     #!/usr/bin/env bash
     set -euo pipefail
@@ -72,20 +62,17 @@ spec:
     }
     trap write_empty_results ERR
 
-    # Validate cosign key is available
-    if [ -z "${COSIGN_KEY_PATH:-}" ] || [ ! -f "${COSIGN_KEY_PATH}" ]; then
-      echo "ERROR: Cosign key not found. COSIGN_KEY_PATH='${COSIGN_KEY_PATH:-}'"
-      echo "The parent Task must mount a cosign-keys workspace and pass the path via the cosign-key-path param."
-      write_empty_results
-      exit 1
-    fi
-
     IMAGE_REF="${IMAGE_URL}@${IMAGE_DIGEST}"
     TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    ARTIFACT_TYPE="application/vnd.in-toto+json"
 
-    # Build the predicate JSON with explicit fields from test output
-    PREDICATE_FILE=$(mktemp)
+    # Build the in-toto statement
+    STATEMENT_FILE=$(mktemp)
     jq -n \
+      --arg type "https://in-toto.io/Statement/v0.1" \
+      --arg predicate_type "${PREDICATE_TYPE}" \
+      --arg image_url "${IMAGE_URL}" \
+      --arg image_digest_hex "${IMAGE_DIGEST#sha256:}" \
       --arg result "$(echo "${TEST_OUTPUT}" | jq -r '.result // "UNKNOWN"')" \
       --arg timestamp "${TIMESTAMP}" \
       --arg test_name "${TEST_NAME}" \
@@ -94,70 +81,53 @@ spec:
       --argjson warnings "$(echo "${TEST_OUTPUT}" | jq '.warnings // 0')" \
       --argjson test_output "${TEST_OUTPUT}" \
       '{
-        result: $result,
-        timestamp: $timestamp,
-        configuration: [{name: $test_name}],
-        successes: $successes,
-        failures: $failures,
-        warnings: $warnings,
-        output: $test_output
-      }' > "${PREDICATE_FILE}"
+        "_type": $type,
+        "predicateType": $predicate_type,
+        "subject": [
+          {
+            "name": $image_url,
+            "digest": {
+              "sha256": $image_digest_hex
+            }
+          }
+        ],
+        "predicate": {
+          "result": $result,
+          "timestamp": $timestamp,
+          "configuration": [{name: $test_name}],
+          "successes": $successes,
+          "failures": $failures,
+          "warnings": $warnings,
+          "output": $test_output
+        }
+      }' > "${STATEMENT_FILE}"
 
     echo "=== Creating Test Result Attestation ==="
     echo "Image:          ${IMAGE_REF}"
     echo "Test:           ${TEST_NAME}"
     echo "Predicate Type: ${PREDICATE_TYPE}"
-    echo "Upload TLog:    ${UPLOAD_TLOG}"
     echo ""
-    echo "Predicate:"
-    jq '.' "${PREDICATE_FILE}"
+    echo "Statement:"
+    jq '.' "${STATEMENT_FILE}"
     echo ""
 
-    # Build cosign attest arguments
-    COSIGN_ARGS=(
-      attest -y
-      --type "${PREDICATE_TYPE}"
-      --predicate "${PREDICATE_FILE}"
-      --key "${COSIGN_KEY_PATH}"
-    )
+    # Attach the attestation as an OCI referrer using oras
+    echo "=== Attaching Attestation ==="
+    oras attach \
+      --artifact-type "${ARTIFACT_TYPE}" \
+      --annotation "predicateType=${PREDICATE_TYPE}" \
+      "${IMAGE_REF}" \
+      "${STATEMENT_FILE}:application/json"
 
-    # Transparency log
-    if [ "${UPLOAD_TLOG}" = "true" ]; then
-      if [ -n "${REKOR_URL:-}" ]; then
-        COSIGN_ARGS+=(--rekor-url "${REKOR_URL}")
-      fi
-    else
-      COSIGN_ARGS+=(--tlog-upload=false)
-    fi
-
-    COSIGN_ARGS+=("${IMAGE_REF}")
-
-    echo "=== Pushing Attestation ==="
-    echo "Signing mode: key-based (${COSIGN_KEY_PATH})"
-    cosign "${COSIGN_ARGS[@]}"
     echo ""
 
     # Discover the attestation digest
     echo "=== Discovering Attestation Digest ==="
 
-    # Try OCI referrers API first (works with OCI 1.1 registries)
     ATTESTATION_DIGEST=$(oras discover "${IMAGE_REF}" \
-      --artifact-type "application/vnd.dev.cosign.artifact.sig.v1+json" \
+      --artifact-type "${ARTIFACT_TYPE}" \
       --format json 2>/dev/null \
       | jq -r '.manifests[0].digest // empty' || true)
-
-    if [ -z "${ATTESTATION_DIGEST}" ]; then
-      ATTESTATION_DIGEST=$(oras discover "${IMAGE_REF}" \
-        --format json 2>/dev/null \
-        | jq -r '.manifests[0].digest // empty' || true)
-    fi
-
-    # Fallback: cosign tag-based scheme (.att tag)
-    if [ -z "${ATTESTATION_DIGEST}" ]; then
-      echo "OCI referrers API returned no results, trying tag-based discovery..."
-      ATTESTATION_DIGEST=$(cosign tree "${IMAGE_REF}" 2>/dev/null \
-        | grep -oP 'sha256:[a-f0-9]{64}' | tail -1 || true)
-    fi
 
     if [ -z "${ATTESTATION_DIGEST}" ]; then
       echo "ERROR: Could not discover attestation digest from registry"
@@ -176,4 +146,4 @@ spec:
 
     echo ""
     echo "=== Attestation Complete ==="
-    rm -f "${PREDICATE_FILE}"
+    rm -f "${STATEMENT_FILE}"

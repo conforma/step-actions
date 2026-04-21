@@ -52,10 +52,6 @@ default_env() {
     export TEST_NAME="integration-test"
     export TEST_OUTPUT='{"result":"PASSED","successes":1,"failures":0,"warnings":0}'
     export PREDICATE_TYPE="https://in-toto.io/attestation/test-result/v0.1"
-    export UPLOAD_TLOG="false"
-    export COSIGN_KEY_PATH="${testdir}/cosign.key"
-    touch "${COSIGN_KEY_PATH}"
-    unset REKOR_URL 2>/dev/null || true
 }
 
 # Helpers for jq assertions via `should satisfy`.
@@ -70,60 +66,25 @@ jq_num_eq() {
 }
 
 
-Describe "COSIGN_KEY_PATH validation"
+Describe "in-toto statement construction"
     BeforeEach testdir
 
-    It "fails when COSIGN_KEY_PATH is unset"
+    It "builds a complete in-toto statement with all fields"
         default_env
-        unset COSIGN_KEY_PATH
-
-        When call "${attest_script}"
-        The status should be failure
-        The output should include "ERROR: Cosign key not found"
-        The contents of file "${RESULT_FILE}" should equal '{"uri":"","digest":""}'
-    End
-
-    It "fails when COSIGN_KEY_PATH is empty"
-        default_env
-        export COSIGN_KEY_PATH=""
-
-        When call "${attest_script}"
-        The status should be failure
-        The output should include "ERROR: Cosign key not found"
-        The contents of file "${RESULT_FILE}" should equal '{"uri":"","digest":""}'
-    End
-
-    It "fails when cosign key file does not exist"
-        default_env
-        export COSIGN_KEY_PATH="${testdir}/nonexistent.key"
-
-        When call "${attest_script}"
-        The status should be failure
-        The output should include "ERROR: Cosign key not found"
-        The contents of file "${RESULT_FILE}" should equal '{"uri":"","digest":""}'
-    End
-End
-
-
-Describe "predicate construction"
-    BeforeEach testdir
-
-    It "includes all fields from test output"
-        default_env
-        Mock cosign
-            cosign_args="$*"
-            %preserve cosign_args
-            prev=""
-            for arg in "$@"; do
-                if [ "$prev" = "--predicate" ]; then
-                    cp "$arg" captured-predicate.json 2>/dev/null || true
-                    break
-                fi
-                prev="$arg"
-            done
-        End
         Mock oras
-            echo '{"manifests":[{"digest":"sha256:mock-digest"}]}'
+            if echo "$*" | grep -q "attach"; then
+                # Capture the statement file passed to oras attach
+                for arg in "$@"; do
+                    # The statement file is the arg matching *:application/json
+                    case "$arg" in
+                        *:application/json)
+                            cp "${arg%%:*}" captured-statement.json 2>/dev/null || true
+                            ;;
+                    esac
+                done
+            else
+                echo '{"manifests":[{"digest":"sha256:mock-digest"}]}'
+            fi
         End
         Mock date
             echo "2025-01-15T12:00:00Z"
@@ -132,30 +93,37 @@ Describe "predicate construction"
         When call "${attest_script}"
         The status should be success
         The output should include "=== Attestation Complete ==="
-        The file "captured-predicate.json" should be exist
-        The contents of file "captured-predicate.json" should satisfy jq_field_eq '.result' 'PASSED'
-        The contents of file "captured-predicate.json" should satisfy jq_field_eq '.configuration[0].name' 'integration-test'
-        The contents of file "captured-predicate.json" should satisfy jq_field_eq '.timestamp' '2025-01-15T12:00:00Z'
-        The contents of file "captured-predicate.json" should satisfy jq_num_eq '.successes' '1'
-        The contents of file "captured-predicate.json" should satisfy jq_num_eq '.failures' '0'
-        The contents of file "captured-predicate.json" should satisfy jq_num_eq '.warnings' '0'
+        The file "captured-statement.json" should be exist
+        # Envelope fields
+        The contents of file "captured-statement.json" should satisfy jq_field_eq '._type' 'https://in-toto.io/Statement/v0.1'
+        The contents of file "captured-statement.json" should satisfy jq_field_eq '.predicateType' 'https://in-toto.io/attestation/test-result/v0.1'
+        # Subject
+        The contents of file "captured-statement.json" should satisfy jq_field_eq '.subject[0].name' 'quay.io/org/image'
+        The contents of file "captured-statement.json" should satisfy jq_field_eq '.subject[0].digest.sha256' 'abcdef1234567890'
+        # Predicate
+        The contents of file "captured-statement.json" should satisfy jq_field_eq '.predicate.result' 'PASSED'
+        The contents of file "captured-statement.json" should satisfy jq_field_eq '.predicate.configuration[0].name' 'integration-test'
+        The contents of file "captured-statement.json" should satisfy jq_field_eq '.predicate.timestamp' '2025-01-15T12:00:00Z'
+        The contents of file "captured-statement.json" should satisfy jq_num_eq '.predicate.successes' '1'
+        The contents of file "captured-statement.json" should satisfy jq_num_eq '.predicate.failures' '0'
+        The contents of file "captured-statement.json" should satisfy jq_num_eq '.predicate.warnings' '0'
     End
 
     It "defaults missing result to UNKNOWN and counters to 0"
         default_env
         export TEST_OUTPUT='{}'
-        Mock cosign
-            prev=""
-            for arg in "$@"; do
-                if [ "$prev" = "--predicate" ]; then
-                    cp "$arg" captured-predicate.json 2>/dev/null || true
-                    break
-                fi
-                prev="$arg"
-            done
-        End
         Mock oras
-            echo '{"manifests":[{"digest":"sha256:mock-digest"}]}'
+            if echo "$*" | grep -q "attach"; then
+                for arg in "$@"; do
+                    case "$arg" in
+                        *:application/json)
+                            cp "${arg%%:*}" captured-statement.json 2>/dev/null || true
+                            ;;
+                    esac
+                done
+            else
+                echo '{"manifests":[{"digest":"sha256:mock-digest"}]}'
+            fi
         End
         Mock date
             echo "2025-01-15T12:00:00Z"
@@ -164,26 +132,26 @@ Describe "predicate construction"
         When call "${attest_script}"
         The status should be success
         The output should include "=== Attestation Complete ==="
-        The contents of file "captured-predicate.json" should satisfy jq_field_eq '.result' 'UNKNOWN'
-        The contents of file "captured-predicate.json" should satisfy jq_num_eq '.successes' '0'
-        The contents of file "captured-predicate.json" should satisfy jq_num_eq '.failures' '0'
-        The contents of file "captured-predicate.json" should satisfy jq_num_eq '.warnings' '0'
+        The contents of file "captured-statement.json" should satisfy jq_field_eq '.predicate.result' 'UNKNOWN'
+        The contents of file "captured-statement.json" should satisfy jq_num_eq '.predicate.successes' '0'
+        The contents of file "captured-statement.json" should satisfy jq_num_eq '.predicate.failures' '0'
+        The contents of file "captured-statement.json" should satisfy jq_num_eq '.predicate.warnings' '0'
     End
 
     It "embeds full test output in the output field"
         default_env
-        Mock cosign
-            prev=""
-            for arg in "$@"; do
-                if [ "$prev" = "--predicate" ]; then
-                    cp "$arg" captured-predicate.json 2>/dev/null || true
-                    break
-                fi
-                prev="$arg"
-            done
-        End
         Mock oras
-            echo '{"manifests":[{"digest":"sha256:mock-digest"}]}'
+            if echo "$*" | grep -q "attach"; then
+                for arg in "$@"; do
+                    case "$arg" in
+                        *:application/json)
+                            cp "${arg%%:*}" captured-statement.json 2>/dev/null || true
+                            ;;
+                    esac
+                done
+            else
+                echo '{"manifests":[{"digest":"sha256:mock-digest"}]}'
+            fi
         End
         Mock date
             echo "2025-01-15T12:00:00Z"
@@ -192,24 +160,24 @@ Describe "predicate construction"
         When call "${attest_script}"
         The status should be success
         The output should include "=== Attestation Complete ==="
-        The contents of file "captured-predicate.json" should satisfy jq_field_eq '.output.result' 'PASSED'
-        The contents of file "captured-predicate.json" should satisfy jq_num_eq '.output.successes' '1'
+        The contents of file "captured-statement.json" should satisfy jq_field_eq '.predicate.output.result' 'PASSED'
+        The contents of file "captured-statement.json" should satisfy jq_num_eq '.predicate.output.successes' '1'
     End
 End
 
 
-Describe "cosign arguments"
+Describe "oras attach arguments"
     BeforeEach testdir
 
-    It "passes --tlog-upload=false when tlog is disabled"
+    It "attaches with correct artifact type and annotation"
         default_env
-        export UPLOAD_TLOG="false"
-        Mock cosign
-            cosign_args="$*"
-            %preserve cosign_args
-        End
         Mock oras
-            echo '{"manifests":[{"digest":"sha256:mock-digest"}]}'
+            if echo "$*" | grep -q "attach"; then
+                oras_args="$*"
+                %preserve oras_args
+            else
+                echo '{"manifests":[{"digest":"sha256:mock-digest"}]}'
+            fi
         End
         Mock date
             echo "2025-01-15T12:00:00Z"
@@ -218,63 +186,20 @@ Describe "cosign arguments"
         When call "${attest_script}"
         The status should be success
         The output should include "=== Attestation Complete ==="
-        The variable cosign_args should include '--tlog-upload=false'
-        The variable cosign_args should include '--new-bundle-format'
-        The variable cosign_args should include '--key'
-    End
-
-    It "passes --rekor-url when tlog enabled with REKOR_URL"
-        default_env
-        export UPLOAD_TLOG="true"
-        export REKOR_URL="https://rekor.example.com"
-        Mock cosign
-            cosign_args="$*"
-            %preserve cosign_args
-        End
-        Mock oras
-            echo '{"manifests":[{"digest":"sha256:mock-digest"}]}'
-        End
-        Mock date
-            echo "2025-01-15T12:00:00Z"
-        End
-
-        When call "${attest_script}"
-        The status should be success
-        The output should include "=== Attestation Complete ==="
-        The variable cosign_args should include '--rekor-url'
-        The variable cosign_args should include 'https://rekor.example.com'
-        The variable cosign_args should not include '--tlog-upload=false'
-    End
-
-    It "omits --rekor-url when tlog enabled without REKOR_URL"
-        default_env
-        export UPLOAD_TLOG="true"
-        Mock cosign
-            cosign_args="$*"
-            %preserve cosign_args
-        End
-        Mock oras
-            echo '{"manifests":[{"digest":"sha256:mock-digest"}]}'
-        End
-        Mock date
-            echo "2025-01-15T12:00:00Z"
-        End
-
-        When call "${attest_script}"
-        The status should be success
-        The output should include "=== Attestation Complete ==="
-        The variable cosign_args should not include '--rekor-url'
-        The variable cosign_args should not include '--tlog-upload=false'
+        The variable oras_args should include '--artifact-type'
+        The variable oras_args should include 'application/vnd.in-toto+json'
+        The variable oras_args should include 'predicateType=https://in-toto.io/attestation/test-result/v0.1'
     End
 
     It "targets the correct image reference"
         default_env
-        Mock cosign
-            cosign_args="$*"
-            %preserve cosign_args
-        End
         Mock oras
-            echo '{"manifests":[{"digest":"sha256:mock-digest"}]}'
+            if echo "$*" | grep -q "attach"; then
+                oras_args="$*"
+                %preserve oras_args
+            else
+                echo '{"manifests":[{"digest":"sha256:mock-digest"}]}'
+            fi
         End
         Mock date
             echo "2025-01-15T12:00:00Z"
@@ -283,7 +208,7 @@ Describe "cosign arguments"
         When call "${attest_script}"
         The status should be success
         The output should include "=== Attestation Complete ==="
-        The variable cosign_args should include 'quay.io/org/image@sha256:abcdef1234567890'
+        The variable oras_args should include 'quay.io/org/image@sha256:abcdef1234567890'
     End
 End
 
@@ -291,13 +216,14 @@ End
 Describe "oras discover"
     BeforeEach testdir
 
-    It "uses digest from primary discover with artifact-type filter"
+    It "uses digest from discover with artifact-type filter"
         default_env
-        Mock cosign
-            :
-        End
         Mock oras
-            echo '{"manifests":[{"digest":"sha256:primary-digest"}]}'
+            if echo "$*" | grep -q "attach"; then
+                :
+            else
+                echo '{"manifests":[{"digest":"sha256:primary-digest"}]}'
+            fi
         End
         Mock date
             echo "2025-01-15T12:00:00Z"
@@ -309,35 +235,14 @@ Describe "oras discover"
         The contents of file "${RESULT_FILE}" should satisfy jq_field_eq '.digest' 'sha256:primary-digest'
     End
 
-    It "falls back to unfiltered discover when primary returns empty"
-        default_env
-        Mock cosign
-            :
-        End
-        Mock oras
-            if echo "$*" | grep -q -- "--artifact-type"; then
-                echo '{"manifests":[]}'
-            else
-                echo '{"manifests":[{"digest":"sha256:fallback-digest"}]}'
-            fi
-        End
-        Mock date
-            echo "2025-01-15T12:00:00Z"
-        End
-
-        When call "${attest_script}"
-        The status should be success
-        The output should include "=== Attestation Complete ==="
-        The contents of file "${RESULT_FILE}" should satisfy jq_field_eq '.digest' 'sha256:fallback-digest'
-    End
-
     It "fails when no attestation digest can be discovered"
         default_env
-        Mock cosign
-            :
-        End
         Mock oras
-            echo '{"manifests":[]}'
+            if echo "$*" | grep -q "attach"; then
+                :
+            else
+                echo '{"manifests":[]}'
+            fi
         End
         Mock date
             echo "2025-01-15T12:00:00Z"
@@ -356,11 +261,12 @@ Describe "result output"
 
     It "writes JSON with correct uri and digest"
         default_env
-        Mock cosign
-            :
-        End
         Mock oras
-            echo '{"manifests":[{"digest":"sha256:attested-abc123"}]}'
+            if echo "$*" | grep -q "attach"; then
+                :
+            else
+                echo '{"manifests":[{"digest":"sha256:attested-abc123"}]}'
+            fi
         End
         Mock date
             echo "2025-01-15T12:00:00Z"
