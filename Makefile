@@ -2,7 +2,7 @@ IMAGE_REPO ?= quay.io/conforma/attest-test-result
 IMAGE_TAG  ?= 0.1
 IMAGE      := $(IMAGE_REPO):$(IMAGE_TAG)
 
-COSIGN_VERSION ?= v2.4.1
+COSIGN_VERSION ?= v3.0.6
 ORAS_VERSION   ?= v1.2.2
 
 .PHONY: build push all

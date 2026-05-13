@@ -1,0 +1,81 @@
+---
+name: ShellSpec Tests
+
+on:
+  pull_request:
+    branches: ["*"]
+  push:
+    branches: ["*"]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq jq
+          sudo wget -qO /usr/local/bin/yq \
+            "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64"
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Install ShellSpec
+        run: curl -fsSL https://git.io/shellspec | sh -s -- --yes
+
+      - name: Run unit tests
+        run: |
+          export PATH="${HOME}/.local/lib/shellspec:${PATH}"
+          ./hack/test-shellspec.sh
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq jq
+
+          sudo wget -qO /usr/local/bin/yq \
+            "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64"
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Install ShellSpec
+        run: curl -fsSL https://git.io/shellspec | sh -s -- --yes
+
+      - name: Install Kind
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/latest/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      - name: Install Tekton CLI
+        run: |
+          TKN_VERSION=$(curl -s https://api.github.com/repos/tektoncd/cli/releases/latest | jq -r .tag_name)
+          curl -LO "https://github.com/tektoncd/cli/releases/download/${TKN_VERSION}/tkn_${TKN_VERSION#v}_Linux_x86_64.tar.gz"
+          tar xzf "tkn_${TKN_VERSION#v}_Linux_x86_64.tar.gz" tkn
+          sudo mv tkn /usr/local/bin/tkn
+
+      - name: Install cosign
+        run: |
+          COSIGN_VERSION=v2.5.3
+          curl -LO "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64"
+          chmod +x cosign-linux-amd64
+          sudo mv cosign-linux-amd64 /usr/local/bin/cosign
+
+      - name: Install oras
+        run: |
+          ORAS_VERSION=v1.2.2
+          curl -LO "https://github.com/oras-project/oras/releases/download/${ORAS_VERSION}/oras_${ORAS_VERSION#v}_linux_amd64.tar.gz"
+          tar xzf "oras_${ORAS_VERSION#v}_linux_amd64.tar.gz" oras
+          sudo mv oras /usr/local/bin/oras
+
+      - name: Run integration tests
+        run: |
+          export PATH="${HOME}/.local/lib/shellspec:${PATH}"
+          ./hack/test-integration.sh

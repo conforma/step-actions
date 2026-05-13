@@ -91,6 +91,5 @@ spec:
           value: $(params.TEST_NAME)
         - name: test-output
           value: $(steps.run-test.results.TEST_OUTPUT)
-      env:
-        - name: COSIGN_KEY_PATH
+        - name: cosign-key-path
           value: $(workspaces.cosign-keys.path)/cosign.key

@@ -1,8 +1,8 @@
 # create-test-result-attestation
 
-Creates and pushes an in-toto test-result attestation to a container registry using cosign. Signs with a cosign key provided by the parent Task's workspace.
+Creates and pushes an unsigned in-toto test-result attestation to a container registry using `oras attach`. The attestation is attached as an OCI referrer, discoverable via the referrers API.
 
-This implements the attestation pattern described in ADR-38 for reusable test result attestations.
+Trust is not established by signing the attestation itself. Instead, the step outputs an `*_ARTIFACT_OUTPUTS` result that causes Tekton Chains to generate SLSA provenance for the attestation. Verifiers check this Chains-generated provenance to confirm the attestation was created by a trusted pipeline.
 
 ## Parameters
 
@@ -13,25 +13,12 @@ This implements the attestation pattern described in ADR-38 for reusable test re
 | test-name | Name of the test (e.g. integration-test, clair-scan) | | true |
 | test-output | JSON test results to include in the attestation predicate | | true |
 | predicate-type | In-toto predicate type URI | `https://in-toto.io/attestation/test-result/v0.1` | false |
-| upload-tlog | Upload to Sigstore transparency log | `"false"` | false |
 
 ## Results
 
 | name | description |
 |------|-------------|
 | TEST_OUTPUT_ARTIFACT_OUTPUTS | JSON object with `uri` and `digest` fields referencing the pushed attestation. Tekton Chains uses this for SLSA provenance. |
-
-## Signing
-
-The parent Task must mount a `cosign-keys` workspace containing the signing key and pass the path via the `COSIGN_KEY_PATH` environment variable:
-
-```yaml
-env:
-  - name: COSIGN_KEY_PATH
-    value: $(workspaces.cosign-keys.path)/cosign.key
-```
-
-If `COSIGN_KEY_PATH` is not set or the key file is not found, the step exits with an error and writes empty results.
 
 ## Usage
 
@@ -65,7 +52,21 @@ steps:
         value: $(params.TEST_NAME)
       - name: test-output
         value: $(steps.run-test.results.TEST_OUTPUT)
-    env:
-      - name: COSIGN_KEY_PATH
-        value: $(workspaces.cosign-keys.path)/cosign.key
+```
+
+## Chain of Trust
+
+```
+Image ──► Test-result attestation (unsigned, attached via oras)
+              │
+              ▼
+          ARTIFACT_OUTPUTS result
+              │
+              ▼
+          Tekton Chains generates SLSA provenance
+          (subject = attestation digest, signed by Chains)
+              │
+              ▼
+          Verifier checks provenance to confirm
+          attestation came from a trusted pipeline
 ```
