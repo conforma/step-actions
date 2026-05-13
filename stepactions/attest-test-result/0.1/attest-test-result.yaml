@@ -116,6 +116,8 @@ spec:
     oras attach \
       --artifact-type "${ARTIFACT_TYPE}" \
       --annotation "predicateType=${PREDICATE_TYPE}" \
+      --annotation "testName=${TEST_NAME}" \
+      --annotation "org.opencontainers.image.created=${TIMESTAMP}" \
       "${IMAGE_REF}" \
       "${STATEMENT_FILE}:application/json"
 
