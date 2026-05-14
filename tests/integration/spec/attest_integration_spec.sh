@@ -67,6 +67,9 @@ EOF
     kubectl -n tekton-pipelines wait deployment tekton-pipelines-controller --for=condition=Available --timeout=5m
     kubectl -n tekton-pipelines wait deployment tekton-pipelines-webhook --for=condition=Available --timeout=5m
 
+    # --- Enable StepActions (required in Tekton v0.65.x) ---
+    kubectl -n tekton-pipelines patch configmap feature-flags --type merge -p '{"data":{"enable-step-actions":"true"}}'
+
     # --- Namespace ---
     kubectl create namespace test --dry-run=client -o yaml | kubectl apply -f -
     kubectl config set-context --current --namespace=test
