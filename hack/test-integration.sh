@@ -6,7 +6,7 @@ set -o nounset
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-for cmd in docker kind kubectl tkn cosign shellspec yq; do
+for cmd in docker kind kubectl tkn oras shellspec yq; do
     if ! command -v "$cmd" &> /dev/null; then
         echo "ERROR: ${cmd} is required but not installed." >&2
         exit 1
