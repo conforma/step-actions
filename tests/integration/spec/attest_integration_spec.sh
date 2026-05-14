@@ -93,13 +93,9 @@ EOF
         | kubectl apply -f -
     kubectl wait deployment registry --for=condition=Available --timeout=3m
 
-    # --- Build step action image and load into Kind nodes ---
-    # Can't push to registry:5000 for container images because containerd
-    # inside Kind can't resolve the Kubernetes Service DNS name. Load the
-    # image directly into Kind's containerd store instead.
-    docker build -t localhost/attest-test-result:test "${ROOT}"
-    docker save localhost/attest-test-result:test -o "${WORK_DIR}/attest-test-result.tar"
-    kind load image-archive "${WORK_DIR}/attest-test-result.tar" --name="${CLUSTER_NAME}"
+    # --- Build step action image and push to in-cluster registry ---
+    docker build -t localhost:5000/attest-test-result:test "${ROOT}"
+    push_local localhost:5000/attest-test-result:test
 
     # --- Push a test image to attest against ---
     docker pull busybox:latest
@@ -117,7 +113,7 @@ EOF
 
     # --- Apply StepAction (override image for local testing) ---
     yq '
-      .spec.image = "localhost/attest-test-result:test"
+      .spec.image = "localhost:5000/attest-test-result:test"
     ' "${ROOT}/stepactions/attest-test-result/0.1/attest-test-result.yaml" \
         | sed -e 's/oras attach /oras attach --plain-http /g' \
               -e 's/oras discover /oras discover --plain-http /g' \
