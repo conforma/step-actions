@@ -118,6 +118,7 @@ spec:
       --annotation "predicateType=${PREDICATE_TYPE}" \
       --annotation "testName=${TEST_NAME}" \
       --annotation "org.opencontainers.image.created=${TIMESTAMP}" \
+      --disable-path-validation \
       "${IMAGE_REF}" \
       "${STATEMENT_FILE}:application/json"
 

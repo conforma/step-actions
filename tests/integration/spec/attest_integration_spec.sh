@@ -200,7 +200,7 @@ EOF
       local blob_digest
       blob_digest=$(oras manifest fetch "${att_ref}" --plain-http 2>/dev/null \
         | jq -r '.layers[0].digest')
-      oras blob fetch "${att_ref}" --descriptor "${blob_digest}" --plain-http --output - 2>/dev/null \
+      oras blob fetch "localhost:5000/test-image@${blob_digest}" --plain-http --output - 2>/dev/null \
         | jq '.predicate'
     }
 
