@@ -169,7 +169,7 @@ End
 Describe "oras attach arguments"
     BeforeEach testdir
 
-    It "attaches with correct artifact type and annotation"
+    It "attaches with correct artifact type and annotations"
         default_env
         Mock oras
             if echo "$*" | grep -q "attach"; then
@@ -189,6 +189,8 @@ Describe "oras attach arguments"
         The variable oras_args should include '--artifact-type'
         The variable oras_args should include 'application/vnd.in-toto+json'
         The variable oras_args should include 'predicateType=https://in-toto.io/attestation/test-result/v0.1'
+        The variable oras_args should include 'testName=integration-test'
+        The variable oras_args should include 'org.opencontainers.image.created=2025-01-15T12:00:00Z'
     End
 
     It "targets the correct image reference"
