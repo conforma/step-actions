@@ -62,13 +62,10 @@ EOF
     kubectl cluster-info 2>&1 || { echo 'ERROR: Failed to access the cluster'; return 1; }
 
     # --- Tekton Pipelines ---
-    local tekton_version=v0.65.2
-    kubectl apply -f "https://storage.googleapis.com/tekton-releases/pipeline/previous/${tekton_version}/release.yaml"
+    local tekton_version=v1.0.2
+    kubectl apply -f "https://github.com/tektoncd/pipeline/releases/download/${tekton_version}/release.yaml"
     kubectl -n tekton-pipelines wait deployment tekton-pipelines-controller --for=condition=Available --timeout=5m
     kubectl -n tekton-pipelines wait deployment tekton-pipelines-webhook --for=condition=Available --timeout=5m
-
-    # --- Enable StepActions (required in Tekton v0.65.x) ---
-    kubectl -n tekton-pipelines patch configmap feature-flags --type merge -p '{"data":{"enable-step-actions":"true"}}'
 
     # --- Namespace ---
     kubectl create namespace test --dry-run=client -o yaml | kubectl apply -f -
