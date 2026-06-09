@@ -62,7 +62,7 @@ EOF
     kubectl cluster-info 2>&1 || { echo 'ERROR: Failed to access the cluster'; return 1; }
 
     # --- Tekton Pipelines ---
-    local tekton_version=v1.0.2
+    local tekton_version=v1.12.0
     kubectl apply -f "https://github.com/tektoncd/pipeline/releases/download/${tekton_version}/release.yaml"
     kubectl -n tekton-pipelines wait deployment tekton-pipelines-controller --for=condition=Available --timeout=5m
     kubectl -n tekton-pipelines wait deployment tekton-pipelines-webhook --for=condition=Available --timeout=5m
