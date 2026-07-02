@@ -28,7 +28,7 @@ Describe "create-test-result-attestation integration"
   }
 
   _setup_impl() {
-    for cmd in docker kind kubectl tkn cosign oras yq; do
+    for cmd in docker kind kubectl tkn oras yq; do
       if ! command -v "$cmd" &> /dev/null; then
         echo "ERROR: ${cmd} is required but not installed." >&2
         return 1
@@ -62,8 +62,8 @@ EOF
     kubectl cluster-info 2>&1 || { echo 'ERROR: Failed to access the cluster'; return 1; }
 
     # --- Tekton Pipelines ---
-    local tekton_version=v1.11.0
-    kubectl apply -f "https://storage.googleapis.com/tekton-releases/pipeline/previous/${tekton_version}/release.yaml"
+    local tekton_version=v1.12.0
+    kubectl apply -f "https://github.com/tektoncd/pipeline/releases/download/${tekton_version}/release.yaml"
     kubectl -n tekton-pipelines wait deployment tekton-pipelines-controller --for=condition=Available --timeout=5m
     kubectl -n tekton-pipelines wait deployment tekton-pipelines-webhook --for=condition=Available --timeout=5m
 
@@ -90,13 +90,9 @@ EOF
         | kubectl apply -f -
     kubectl wait deployment registry --for=condition=Available --timeout=3m
 
-    # --- Build step action image and load into Kind nodes ---
-    # Can't push to registry:5000 for container images because containerd
-    # inside Kind can't resolve the Kubernetes Service DNS name. Load the
-    # image directly into Kind's containerd store instead.
-    docker build -t localhost/attest-test-result:test "${ROOT}"
-    docker save localhost/attest-test-result:test -o "${WORK_DIR}/attest-test-result.tar"
-    kind load image-archive "${WORK_DIR}/attest-test-result.tar" --name="${CLUSTER_NAME}"
+    # --- Build step action image and push to in-cluster registry ---
+    docker build -t localhost:5000/attest-test-result:test "${ROOT}"
+    push_local localhost:5000/attest-test-result:test
 
     # --- Push a test image to attest against ---
     docker pull busybox:latest
@@ -112,32 +108,12 @@ EOF
     fi
     echo "Test image digest: ${TEST_IMAGE_DIGEST}"
 
-    # --- Cosign keypair ---
-    pushd "${WORK_DIR}" > /dev/null
-    COSIGN_PASSWORD="" cosign generate-key-pair 2>/dev/null
-    popd > /dev/null
-    kubectl create secret generic cosign-keys \
-        --from-file=cosign.key="${WORK_DIR}/cosign.key" \
-        --from-file=cosign.pub="${WORK_DIR}/cosign.pub" \
-        --dry-run=client -o yaml | kubectl apply -f -
-
     # --- Apply StepAction (override image for local testing) ---
-    # The step-action already has cosign-key-path as a param.
-    # For local testing we need:
-    #   - Override the image to use the locally-built one
-    #   - Set COSIGN_PASSWORD so cosign doesn't prompt
-    #   - Add --allow-http-registry and --allow-insecure-registry for cosign
-    #   - Add --plain-http for oras discover
     yq '
-      .spec.image = "localhost/attest-test-result:test" |
-      .spec.env += [
-        {"name": "COSIGN_PASSWORD", "value": ""},
-        {"name": "COSIGN_ALLOW_HTTP_REGISTRY", "value": "true"}
-      ]
+      .spec.image = "localhost:5000/attest-test-result:test"
     ' "${ROOT}/stepactions/attest-test-result/0.1/attest-test-result.yaml" \
-        | sed -e 's/oras discover /oras discover --plain-http /g' \
-              -e 's/--key "${COSIGN_KEY_PATH}"/--key "${COSIGN_KEY_PATH}" --allow-insecure-registry --allow-http-registry/g' \
-              -e 's/cosign tree /cosign tree --allow-http-registry --allow-insecure-registry /g' \
+        | sed -e 's/oras attach /oras attach --plain-http /g' \
+              -e 's/oras discover /oras discover --plain-http /g' \
         | kubectl apply -f -
 
     # --- Apply wrapper Task ---
@@ -160,8 +136,7 @@ EOF
         -p 'TEST_OUTPUT={"result":"PASSED","successes":1,"failures":0,"warnings":0}' \
         --use-param-defaults \
         --timeout 5m \
-        --showlog \
-        -w name=cosign-keys,secret=cosign-keys
+        --showlog
     The status should be success
     The output should include "=== Attestation Complete ==="
     The taskrun should jq '.status.steps[0].results[] | select(.name=="TEST_OUTPUT_ARTIFACT_OUTPUTS").value | fromjson | .uri | test("registry:5000/test-image")'
@@ -191,46 +166,39 @@ EOF
         -p 'TEST_OUTPUT={"result":"FAILED","successes":0,"failures":3,"warnings":1}' \
         --use-param-defaults \
         --timeout 5m \
-        --showlog \
-        -w name=cosign-keys,secret=cosign-keys
+        --showlog
     The status should be success
     The output should include "=== Attestation Complete ==="
     The taskrun should jq '.status.steps[0].results[] | select(.name=="TEST_OUTPUT_ARTIFACT_OUTPUTS").value | fromjson | .uri | test("registry:5000/test-image")'
     The taskrun should jq '.status.steps[0].results[] | select(.name=="TEST_OUTPUT_ARTIFACT_OUTPUTS").value | fromjson | .digest | test("^sha256:[a-f0-9]+$")'
   End
 
-  It "produces a valid cosign attestation signature"
-    verify_signature() {
+  It "attestation has correct annotations"
+    check_annotations() {
       local image_ref="localhost:5000/test-image@${TEST_IMAGE_DIGEST}"
-      cosign verify-attestation \
-          --key "${WORK_DIR}/cosign.pub" \
-          --insecure-ignore-tlog \
-          --allow-http-registry \
-          --type "https://in-toto.io/attestation/test-result/v0.1" \
-          "${image_ref}" 2>/dev/null \
-        | jq -r '.payload' | base64 -d | jq -r '.predicate.result'
+      oras discover "${image_ref}" -o json --plain-http 2>/dev/null \
+        | jq -r '.manifests[] | select(.annotations.testName == "integration-test") | .annotations'
     }
 
-    When call verify_signature
+    When call check_annotations
     The status should be success
-    # The most recent attestation was for "FAILED"; the first was "PASSED".
-    # cosign verify-attestation returns all matching attestations, so both
-    # should be present in the output.
-    The output should include "PASSED"
-    The output should include "FAILED"
+    The output should include '"testName": "integration-test"'
+    The output should include '"predicateType": "https://in-toto.io/attestation/test-result/v0.1"'
+    The output should include '"org.opencontainers.image.created":'
   End
 
   It "attestation predicate contains expected fields"
     check_predicate() {
       local image_ref="localhost:5000/test-image@${TEST_IMAGE_DIGEST}"
-      cosign verify-attestation \
-          --key "${WORK_DIR}/cosign.pub" \
-          --insecure-ignore-tlog \
-          --allow-http-registry \
-          --type "https://in-toto.io/attestation/test-result/v0.1" \
-          "${image_ref}" 2>/dev/null \
-        | head -1 \
-        | jq -r '.payload' | base64 -d | jq '.predicate'
+      local att_digest
+      att_digest=$(oras discover "${image_ref}" -o json --plain-http 2>/dev/null \
+        | jq -r '.manifests[] | select(.annotations.testName == "integration-test") | .digest')
+      local att_ref="localhost:5000/test-image@${att_digest}"
+      local blob_digest
+      blob_digest=$(oras manifest fetch "${att_ref}" --plain-http 2>/dev/null \
+        | jq -r '.layers[0].digest')
+      oras blob fetch "localhost:5000/test-image@${blob_digest}" --plain-http --output - 2>/dev/null \
+        | jq '.predicate'
     }
 
     When call check_predicate
@@ -242,25 +210,5 @@ EOF
     The output should include '"failures":'
     The output should include '"warnings":'
     The output should include '"output":'
-  End
-
-  It "writes empty results when cosign key is not available"
-    run_without_key() {
-      kubectl create secret generic cosign-keys-empty \
-          --from-literal=placeholder=empty \
-          --dry-run=client -o yaml | kubectl apply -f -
-      tkn task start test-attest-wrapper \
-          -p IMAGE_URL=registry:5000/test-image \
-          -p IMAGE_DIGEST="${TEST_IMAGE_DIGEST}" \
-          --use-param-defaults \
-          --timeout 5m \
-          --showlog \
-          -w name=cosign-keys,secret=cosign-keys-empty 2>&1 || true
-    }
-
-    When call run_without_key
-    The output should include "ERROR: Cosign key not found"
-    The taskrun should jq '.status.steps[0].results[] | select(.name=="TEST_OUTPUT_ARTIFACT_OUTPUTS").value | fromjson | .uri == ""'
-    The taskrun should jq '.status.steps[0].results[] | select(.name=="TEST_OUTPUT_ARTIFACT_OUTPUTS").value | fromjson | .digest == ""'
   End
 End
