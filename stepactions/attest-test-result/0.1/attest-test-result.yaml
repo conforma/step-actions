@@ -38,7 +38,7 @@ spec:
         JSON object with "uri" and "digest" fields referencing the pushed
         attestation. Tekton Chains uses this to include the attestation in
         SLSA provenance.
-  image: quay.io/conforma/attest-test-result:0.1
+  image: quay.io/konflux-ci/oras:latest
   env:
     - name: IMAGE_URL
       value: $(params.image-url)
@@ -68,39 +68,31 @@ spec:
 
     # Build the in-toto statement
     STATEMENT_FILE=$(mktemp)
-    jq -n \
-      --arg type "https://in-toto.io/Statement/v0.1" \
-      --arg predicate_type "${PREDICATE_TYPE}" \
-      --arg image_url "${IMAGE_URL}" \
-      --arg image_digest_hex "${IMAGE_DIGEST#sha256:}" \
-      --arg result "$(echo "${TEST_OUTPUT}" | jq -r '.result // "UNKNOWN"')" \
-      --arg timestamp "${TIMESTAMP}" \
-      --arg test_name "${TEST_NAME}" \
-      --argjson successes "$(echo "${TEST_OUTPUT}" | jq '.successes // 0')" \
-      --argjson failures "$(echo "${TEST_OUTPUT}" | jq '.failures // 0')" \
-      --argjson warnings "$(echo "${TEST_OUTPUT}" | jq '.warnings // 0')" \
-      --argjson test_output "${TEST_OUTPUT}" \
-      '{
-        "_type": $type,
-        "predicateType": $predicate_type,
-        "subject": [
-          {
-            "name": $image_url,
-            "digest": {
-              "sha256": $image_digest_hex
-            }
-          }
-        ],
-        "predicate": {
-          "result": $result,
-          "timestamp": $timestamp,
-          "configuration": [{name: $test_name}],
-          "successes": $successes,
-          "failures": $failures,
-          "warnings": $warnings,
-          "output": $test_output
-        }
-      }' > "${STATEMENT_FILE}"
+    IMAGE_DIGEST_HEX="${IMAGE_DIGEST#sha256:}"
+    export IMAGE_DIGEST_HEX TIMESTAMP
+
+    RESULT=$(echo "${TEST_OUTPUT}" | yq -p json -r '.result // "UNKNOWN"')
+    SUCCESSES=$(echo "${TEST_OUTPUT}" | yq -p json '.successes // 0')
+    FAILURES=$(echo "${TEST_OUTPUT}" | yq -p json '.failures // 0')
+    WARNINGS=$(echo "${TEST_OUTPUT}" | yq -p json '.warnings // 0')
+    export RESULT SUCCESSES FAILURES WARNINGS
+
+    STMT_TYPE="https://in-toto.io/Statement/v0.1"
+    export STMT_TYPE
+
+    yq -n -o json '
+      ._type = strenv(STMT_TYPE) |
+      .predicateType = strenv(PREDICATE_TYPE) |
+      .subject[0].name = strenv(IMAGE_URL) |
+      .subject[0].digest.sha256 = strenv(IMAGE_DIGEST_HEX) |
+      .predicate.result = strenv(RESULT) |
+      .predicate.timestamp = strenv(TIMESTAMP) |
+      .predicate.configuration[0].name = strenv(TEST_NAME) |
+      .predicate.successes = env(SUCCESSES) |
+      .predicate.failures = env(FAILURES) |
+      .predicate.warnings = env(WARNINGS) |
+      .predicate.output = env(TEST_OUTPUT)
+    ' > "${STATEMENT_FILE}"
 
     echo "=== Creating Test Result Attestation ==="
     echo "Image:          ${IMAGE_REF}"
@@ -108,7 +100,7 @@ spec:
     echo "Predicate Type: ${PREDICATE_TYPE}"
     echo ""
     echo "Statement:"
-    jq '.' "${STATEMENT_FILE}"
+    yq -p json -o json '.' "${STATEMENT_FILE}"
     echo ""
 
     # Attach the attestation as an OCI referrer using oras
@@ -129,8 +121,8 @@ spec:
 
     ATTESTATION_DIGEST=$(oras discover "${IMAGE_REF}" \
       --artifact-type "${ARTIFACT_TYPE}" \
-      --format json 2>/dev/null \
-      | jq -r '.manifests[0].digest // empty' || true)
+      --format json \
+      | yq -p json -o json -r '.referrers[0].digest // ""' || true)
 
     if [ -z "${ATTESTATION_DIGEST}" ]; then
       echo "ERROR: Could not discover attestation digest from registry"
@@ -142,10 +134,11 @@ spec:
     echo "Attestation Digest: ${ATTESTATION_DIGEST}"
 
     # Write the single JSON result
-    jq -n \
-      --arg uri "${IMAGE_URL}" \
-      --arg digest "${ATTESTATION_DIGEST}" \
-      '{"uri": $uri, "digest": $digest}' > "${RESULT_FILE}"
+    export ATTESTATION_DIGEST
+    yq -n -o json '
+      .uri = strenv(IMAGE_URL) |
+      .digest = strenv(ATTESTATION_DIGEST)
+    ' > "${RESULT_FILE}"
 
     echo ""
     echo "=== Attestation Complete ==="
