@@ -44,6 +44,7 @@ spec:
   steps:
     - name: run-test
       image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      imagePullPolicy: IfNotPresent
       env:
         - name: IMAGE_URL
           value: $(params.IMAGE_URL)
