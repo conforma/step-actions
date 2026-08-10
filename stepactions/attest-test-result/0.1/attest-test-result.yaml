@@ -32,6 +32,13 @@ spec:
       type: string
       description: In-toto predicate type URI
       default: "https://in-toto.io/attestation/test-result/v0.1"
+    - name: registry-config
+      type: string
+      description: >-
+        Path to a docker config JSON file with push credentials. When set,
+        oras uses this instead of the default merged credentials. Needed
+        when multiple SA secrets conflict during Tekton credential merging.
+      default: ""
   results:
     - name: TEST_OUTPUT_ARTIFACT_OUTPUTS
       description: >-
@@ -50,6 +57,8 @@ spec:
       value: $(params.test-output)
     - name: PREDICATE_TYPE
       value: $(params.predicate-type)
+    - name: REGISTRY_CONFIG
+      value: $(params.registry-config)
   script: |
     #!/usr/bin/env bash
     set -euo pipefail
@@ -103,22 +112,34 @@ spec:
     yq -p json -o json '.' "${STATEMENT_FILE}"
     echo ""
 
+    ORAS_ARGS=()
+    if [ -n "${REGISTRY_CONFIG}" ] && [ -f "${REGISTRY_CONFIG}" ]; then
+      echo "Using registry config: ${REGISTRY_CONFIG}"
+      ORAS_ARGS+=(--registry-config "${REGISTRY_CONFIG}")
+    fi
+
     # Attach the attestation as an OCI referrer using oras
     echo "=== Attaching Attestation ==="
-    oras attach \
+    if ! oras attach \
+      "${ORAS_ARGS[@]}" \
       --artifact-type "${ARTIFACT_TYPE}" \
       --annotation "predicateType=${PREDICATE_TYPE}" \
       --annotation "testName=${TEST_NAME}" \
       --annotation "org.opencontainers.image.created=${TIMESTAMP}" \
       --disable-path-validation \
       "${IMAGE_REF}" \
-      "${STATEMENT_FILE}:application/json"
+      "${STATEMENT_FILE}:application/json"; then
+      echo "ERROR: oras attach failed"
+      exit 1
+    fi
 
     echo ""
 
     # Discover the attestation digest
     echo "=== Discovering Attestation Digest ==="
 
+    # No registry-config needed here, whatever default credential we have is
+    # good enough for reads, and actually the push-only credential has problems
     ATTESTATION_DIGEST=$(oras discover "${IMAGE_REF}" \
       --artifact-type "${ARTIFACT_TYPE}" \
       --format json \
