@@ -38,7 +38,7 @@ spec:
         JSON object with "uri" and "digest" fields referencing the pushed
         attestation. Tekton Chains uses this to include the attestation in
         SLSA provenance.
-  image: quay.io/conforma/attest-test-result:0.1
+  image: quay.io/konflux-ci/task-runner:v3@sha256:790df1bb5ea7a9ce4c1717ff341398ff72c99faed1c2e939a3b4a15ff8f4a493
   env:
     - name: IMAGE_URL
       value: $(params.image-url)
@@ -60,7 +60,7 @@ spec:
     write_empty_results() {
       echo -n '{"uri":"","digest":""}' > "${RESULT_FILE}"
     }
-    trap write_empty_results ERR
+    trap 'echo "ERROR: command failed at line ${LINENO}" >&2; write_empty_results' ERR
 
     IMAGE_REF="${IMAGE_URL}@${IMAGE_DIGEST}"
     TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -111,9 +111,19 @@ spec:
     jq '.' "${STATEMENT_FILE}"
     echo ""
 
+    # select-oci-auth picks the repo-scoped token for IMAGE_REF out of the
+    # merged docker config and emits a registry-keyed config that oras can
+    # use. This avoids a broad read-only credential masking the repo-specific
+    # push credential during Tekton credential merging.
+    AUTH_FILE=$(mktemp)
+    select-oci-auth "${IMAGE_REF}" > "${AUTH_FILE}"
+
+    trap 'exit_code=$?; rm -f "${STATEMENT_FILE}" "${AUTH_FILE}"; exit ${exit_code}' EXIT
+
     # Attach the attestation as an OCI referrer using oras
     echo "=== Attaching Attestation ==="
     oras attach \
+      --registry-config "${AUTH_FILE}" \
       --artifact-type "${ARTIFACT_TYPE}" \
       --annotation "predicateType=${PREDICATE_TYPE}" \
       --annotation "testName=${TEST_NAME}" \
@@ -128,9 +138,10 @@ spec:
     echo "=== Discovering Attestation Digest ==="
 
     ATTESTATION_DIGEST=$(oras discover "${IMAGE_REF}" \
+      --registry-config "${AUTH_FILE}" \
       --artifact-type "${ARTIFACT_TYPE}" \
-      --format json 2>/dev/null \
-      | jq -r '.manifests[0].digest // empty' || true)
+      --format json \
+      | jq -r '.referrers[0].digest // empty')
 
     if [ -z "${ATTESTATION_DIGEST}" ]; then
       echo "ERROR: Could not discover attestation digest from registry"
@@ -149,4 +160,3 @@ spec:
 
     echo ""
     echo "=== Attestation Complete ==="
-    rm -f "${STATEMENT_FILE}"

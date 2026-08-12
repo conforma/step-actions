@@ -90,10 +90,6 @@ EOF
         | kubectl apply -f -
     kubectl wait deployment registry --for=condition=Available --timeout=3m
 
-    # --- Build step action image and push to in-cluster registry ---
-    docker build -t localhost:5000/attest-test-result:test "${ROOT}"
-    push_local localhost:5000/attest-test-result:test
-
     # --- Push a test image to attest against ---
     docker pull busybox:latest
     docker tag busybox:latest localhost:5000/test-image:latest
@@ -108,12 +104,10 @@ EOF
     fi
     echo "Test image digest: ${TEST_IMAGE_DIGEST}"
 
-    # --- Apply StepAction (override image for local testing) ---
-    yq '
-      .spec.image = "localhost:5000/attest-test-result:test"
-    ' "${ROOT}/stepactions/attest-test-result/0.1/attest-test-result.yaml" \
-        | sed -e 's/oras attach /oras attach --plain-http /g' \
-              -e 's/oras discover /oras discover --plain-http /g' \
+    # --- Apply StepAction (using prebuilt task-runner image) ---
+    sed -e 's/oras attach /oras attach --plain-http /g' \
+        -e 's/oras discover /oras discover --plain-http /g' \
+        "${ROOT}/stepactions/attest-test-result/0.1/attest-test-result.yaml" \
         | kubectl apply -f -
 
     # --- Apply wrapper Task ---
@@ -148,7 +142,7 @@ EOF
       local image_ref="localhost:5000/test-image@${TEST_IMAGE_DIGEST}"
       local manifests
       manifests=$(oras discover "${image_ref}" -o json --plain-http 2>/dev/null \
-          | jq '.manifests | length')
+          | jq '.referrers | length')
       echo "manifests_found=${manifests}"
       [ "${manifests}" -gt 0 ]
     }
@@ -177,7 +171,7 @@ EOF
     check_annotations() {
       local image_ref="localhost:5000/test-image@${TEST_IMAGE_DIGEST}"
       oras discover "${image_ref}" -o json --plain-http 2>/dev/null \
-        | jq -r '.manifests[] | select(.annotations.testName == "integration-test") | .annotations'
+        | jq -r '.referrers[] | select(.annotations.testName == "integration-test") | .annotations'
     }
 
     When call check_annotations
@@ -191,8 +185,10 @@ EOF
     check_predicate() {
       local image_ref="localhost:5000/test-image@${TEST_IMAGE_DIGEST}"
       local att_digest
+      # Re-runs against a reused registry can attach multiple integration-test
+      # attestations to the same subject, so take the first matching referrer.
       att_digest=$(oras discover "${image_ref}" -o json --plain-http 2>/dev/null \
-        | jq -r '.manifests[] | select(.annotations.testName == "integration-test") | .digest')
+        | jq -r 'first(.referrers[] | select(.annotations.testName == "integration-test") | .digest)')
       local att_ref="localhost:5000/test-image@${att_digest}"
       local blob_digest
       blob_digest=$(oras manifest fetch "${att_ref}" --plain-http 2>/dev/null \
