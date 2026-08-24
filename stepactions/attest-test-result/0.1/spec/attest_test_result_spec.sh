@@ -71,6 +71,9 @@ Describe "in-toto statement construction"
 
     It "builds a complete in-toto statement with all fields"
         default_env
+        Mock select-oci-auth
+            echo '{"auths":{"quay.io":{"auth":"dGVzdDp0ZXN0"}}}'
+        End
         Mock oras
             if echo "$*" | grep -q "attach"; then
                 # Capture the statement file passed to oras attach
@@ -83,7 +86,7 @@ Describe "in-toto statement construction"
                     esac
                 done
             else
-                echo '{"manifests":[{"digest":"sha256:mock-digest"}]}'
+                echo '{"referrers":[{"digest":"sha256:mock-digest"}]}'
             fi
         End
         Mock date
@@ -112,6 +115,9 @@ Describe "in-toto statement construction"
     It "defaults missing result to UNKNOWN and counters to 0"
         default_env
         export TEST_OUTPUT='{}'
+        Mock select-oci-auth
+            echo '{"auths":{"quay.io":{"auth":"dGVzdDp0ZXN0"}}}'
+        End
         Mock oras
             if echo "$*" | grep -q "attach"; then
                 for arg in "$@"; do
@@ -122,7 +128,7 @@ Describe "in-toto statement construction"
                     esac
                 done
             else
-                echo '{"manifests":[{"digest":"sha256:mock-digest"}]}'
+                echo '{"referrers":[{"digest":"sha256:mock-digest"}]}'
             fi
         End
         Mock date
@@ -140,6 +146,9 @@ Describe "in-toto statement construction"
 
     It "embeds full test output in the output field"
         default_env
+        Mock select-oci-auth
+            echo '{"auths":{"quay.io":{"auth":"dGVzdDp0ZXN0"}}}'
+        End
         Mock oras
             if echo "$*" | grep -q "attach"; then
                 for arg in "$@"; do
@@ -150,7 +159,7 @@ Describe "in-toto statement construction"
                     esac
                 done
             else
-                echo '{"manifests":[{"digest":"sha256:mock-digest"}]}'
+                echo '{"referrers":[{"digest":"sha256:mock-digest"}]}'
             fi
         End
         Mock date
@@ -171,12 +180,15 @@ Describe "oras attach arguments"
 
     It "attaches with correct artifact type and annotations"
         default_env
+        Mock select-oci-auth
+            echo '{"auths":{"quay.io":{"auth":"dGVzdDp0ZXN0"}}}'
+        End
         Mock oras
             if echo "$*" | grep -q "attach"; then
                 oras_args="$*"
                 %preserve oras_args
             else
-                echo '{"manifests":[{"digest":"sha256:mock-digest"}]}'
+                echo '{"referrers":[{"digest":"sha256:mock-digest"}]}'
             fi
         End
         Mock date
@@ -195,12 +207,15 @@ Describe "oras attach arguments"
 
     It "targets the correct image reference"
         default_env
+        Mock select-oci-auth
+            echo '{"auths":{"quay.io":{"auth":"dGVzdDp0ZXN0"}}}'
+        End
         Mock oras
             if echo "$*" | grep -q "attach"; then
                 oras_args="$*"
                 %preserve oras_args
             else
-                echo '{"manifests":[{"digest":"sha256:mock-digest"}]}'
+                echo '{"referrers":[{"digest":"sha256:mock-digest"}]}'
             fi
         End
         Mock date
@@ -220,11 +235,14 @@ Describe "oras discover"
 
     It "uses digest from discover with artifact-type filter"
         default_env
+        Mock select-oci-auth
+            echo '{"auths":{"quay.io":{"auth":"dGVzdDp0ZXN0"}}}'
+        End
         Mock oras
             if echo "$*" | grep -q "attach"; then
                 :
             else
-                echo '{"manifests":[{"digest":"sha256:primary-digest"}]}'
+                echo '{"referrers":[{"digest":"sha256:primary-digest"}]}'
             fi
         End
         Mock date
@@ -239,6 +257,9 @@ Describe "oras discover"
 
     It "fails when no attestation digest can be discovered"
         default_env
+        Mock select-oci-auth
+            echo '{"auths":{"quay.io":{"auth":"dGVzdDp0ZXN0"}}}'
+        End
         Mock oras
             if echo "$*" | grep -q "attach"; then
                 :
@@ -263,11 +284,14 @@ Describe "result output"
 
     It "writes JSON with correct uri and digest"
         default_env
+        Mock select-oci-auth
+            echo '{"auths":{"quay.io":{"auth":"dGVzdDp0ZXN0"}}}'
+        End
         Mock oras
             if echo "$*" | grep -q "attach"; then
                 :
             else
-                echo '{"manifests":[{"digest":"sha256:attested-abc123"}]}'
+                echo '{"referrers":[{"digest":"sha256:attested-abc123"}]}'
             fi
         End
         Mock date

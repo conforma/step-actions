@@ -63,7 +63,7 @@ jobs:
 
       - name: Install oras
         run: |
-          ORAS_VERSION=v1.2.2
+          ORAS_VERSION=v1.3.3
           curl -LO "https://github.com/oras-project/oras/releases/download/${ORAS_VERSION}/oras_${ORAS_VERSION#v}_linux_amd64.tar.gz"
           tar xzf "oras_${ORAS_VERSION#v}_linux_amd64.tar.gz" oras
           sudo mv oras /usr/local/bin/oras
