@@ -33,11 +33,12 @@ spec:
       description: In-toto predicate type URI
       default: "https://in-toto.io/attestation/test-result/v0.1"
   results:
-    - name: TEST_OUTPUT_ARTIFACT_OUTPUTS
-      description: >-
-        JSON object with "uri" and "digest" fields referencing the pushed
-        attestation. Tekton Chains uses this to include the attestation in
-        SLSA provenance.
+    # Available in the task as $(steps.<step-name>.results.ARTIFACT_URI)
+    # and $(steps.<step-name>.results.ARTIFACT_DIGEST)
+    - name: ARTIFACT_URI
+      description: URI of the image the attestation was attached to.
+    - name: ARTIFACT_DIGEST
+      description: Digest of the pushed attestation.
   image: quay.io/konflux-ci/task-runner:v3@sha256:790df1bb5ea7a9ce4c1717ff341398ff72c99faed1c2e939a3b4a15ff8f4a493
   env:
     - name: IMAGE_URL
@@ -54,11 +55,13 @@ spec:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    RESULT_FILE="$(step.results.TEST_OUTPUT_ARTIFACT_OUTPUTS.path)"
+    URI_RESULT_FILE="$(step.results.ARTIFACT_URI.path)"
+    DIGEST_RESULT_FILE="$(step.results.ARTIFACT_DIGEST.path)"
 
     # Write empty results on any error
     write_empty_results() {
-      echo -n '{"uri":"","digest":""}' > "${RESULT_FILE}"
+      echo -n '' > "${URI_RESULT_FILE}"
+      echo -n '' > "${DIGEST_RESULT_FILE}"
     }
     trap 'echo "ERROR: command failed at line ${LINENO}" >&2; write_empty_results' ERR
 
@@ -152,11 +155,8 @@ spec:
     echo "Attestation URL:    ${IMAGE_URL}"
     echo "Attestation Digest: ${ATTESTATION_DIGEST}"
 
-    # Write the single JSON result
-    jq -n \
-      --arg uri "${IMAGE_URL}" \
-      --arg digest "${ATTESTATION_DIGEST}" \
-      '{"uri": $uri, "digest": $digest}' > "${RESULT_FILE}"
+    printf '%s' "${IMAGE_URL}"          > "${URI_RESULT_FILE}"
+    printf '%s' "${ATTESTATION_DIGEST}" > "${DIGEST_RESULT_FILE}"
 
     echo ""
     echo "=== Attestation Complete ==="

@@ -26,14 +26,18 @@ spec:
     - name: TEST_OUTPUT
       description: JSON summary of the test results
       type: string
-    - name: TEST_OUTPUT_ARTIFACT_OUTPUTS
+    - name: ARTIFACT_URI
       description: |
-        Reference to the test-result attestation pushed to registry.
+        URI of the image the test-result attestation was attached to.
         Tekton Chains will include this in the SLSA provenance attestation.
-      type: object
-      properties:
-        uri: {}
-        digest: {}
+      type: string
+      value: $(steps.create-attestation.results.ARTIFACT_URI)
+    - name: ARTIFACT_DIGEST
+      description: |
+        Digest of the pushed test-result attestation.
+        Tekton Chains will include this in the SLSA provenance attestation.
+      type: string
+      value: $(steps.create-attestation.results.ARTIFACT_DIGEST)
 
   workspaces:
     - name: cosign-keys
