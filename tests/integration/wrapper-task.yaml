@@ -21,8 +21,12 @@ spec:
       default: '{"result":"PASSED","successes":1,"failures":0,"warnings":0}'
 
   results:
-    - name: TEST_OUTPUT_ARTIFACT_OUTPUTS
+    - name: ARTIFACT_URI
       type: string
+      value: $(steps.create-attestation.results.ARTIFACT_URI)
+    - name: ARTIFACT_DIGEST
+      type: string
+      value: $(steps.create-attestation.results.ARTIFACT_DIGEST)
 
   steps:
     - name: create-attestation

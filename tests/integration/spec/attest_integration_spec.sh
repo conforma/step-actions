@@ -133,8 +133,8 @@ EOF
         --showlog
     The status should be success
     The output should include "=== Attestation Complete ==="
-    The taskrun should jq '.status.steps[0].results[] | select(.name=="TEST_OUTPUT_ARTIFACT_OUTPUTS").value | fromjson | .uri | test("registry:5000/test-image")'
-    The taskrun should jq '.status.steps[0].results[] | select(.name=="TEST_OUTPUT_ARTIFACT_OUTPUTS").value | fromjson | .digest | test("^sha256:[a-f0-9]+$")'
+    The taskrun should jq '.status.steps[0].results[] | select(.name=="ARTIFACT_URI").value | test("registry:5000/test-image")'
+    The taskrun should jq '.status.steps[0].results[] | select(.name=="ARTIFACT_DIGEST").value | test("^sha256:[a-f0-9]+$")'
   End
 
   It "attestation is discoverable from the registry"
@@ -163,8 +163,8 @@ EOF
         --showlog
     The status should be success
     The output should include "=== Attestation Complete ==="
-    The taskrun should jq '.status.steps[0].results[] | select(.name=="TEST_OUTPUT_ARTIFACT_OUTPUTS").value | fromjson | .uri | test("registry:5000/test-image")'
-    The taskrun should jq '.status.steps[0].results[] | select(.name=="TEST_OUTPUT_ARTIFACT_OUTPUTS").value | fromjson | .digest | test("^sha256:[a-f0-9]+$")'
+    The taskrun should jq '.status.steps[0].results[] | select(.name=="ARTIFACT_URI").value | test("registry:5000/test-image")'
+    The taskrun should jq '.status.steps[0].results[] | select(.name=="ARTIFACT_DIGEST").value | test("^sha256:[a-f0-9]+$")'
   End
 
   It "attestation has correct annotations"
