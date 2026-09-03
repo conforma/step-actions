@@ -2,7 +2,7 @@
 
 Creates and pushes an unsigned in-toto test-result attestation to a container registry using `oras attach`. The attestation is attached as an OCI referrer, discoverable via the referrers API.
 
-Trust is not established by signing the attestation itself. Instead, the step outputs an `*_ARTIFACT_OUTPUTS` result that causes Tekton Chains to generate SLSA provenance for the attestation. Verifiers check this Chains-generated provenance to confirm the attestation was created by a trusted pipeline.
+Trust is not established by signing the attestation itself. Instead, the step outputs `ARTIFACT_URI` and `ARTIFACT_DIGEST` results that cause Tekton Chains to generate SLSA provenance for the attestation. Verifiers check this Chains-generated provenance to confirm the attestation was created by a trusted pipeline.
 
 ## Parameters
 
@@ -18,19 +18,21 @@ Trust is not established by signing the attestation itself. Instead, the step ou
 
 | name | description |
 |------|-------------|
-| TEST_OUTPUT_ARTIFACT_OUTPUTS | JSON object with `uri` and `digest` fields referencing the pushed attestation. Tekton Chains uses this for SLSA provenance. |
+| ARTIFACT_URI | URI of the image the attestation was attached to. Tekton Chains uses this for SLSA provenance. |
+| ARTIFACT_DIGEST | Digest of the pushed attestation. Tekton Chains uses this for SLSA provenance. |
 
 ## Usage
 
-The parent Task should map the StepAction results into a Task result so that Tekton Chains creates SLSA provenance for the attestation:
+The parent Task should map the StepAction results into Task results so that Tekton Chains creates SLSA provenance for the attestation:
 
 ```yaml
 results:
-  - name: TEST_OUTPUT_ARTIFACT_OUTPUTS
-    type: object
-    properties:
-      uri: {}
-      digest: {}
+  - name: ARTIFACT_URI
+    type: string
+    value: $(steps.create-attestation.results.ARTIFACT_URI)
+  - name: ARTIFACT_DIGEST
+    type: string
+    value: $(steps.create-attestation.results.ARTIFACT_DIGEST)
 
 steps:
   - name: create-attestation
@@ -60,7 +62,7 @@ steps:
 Image ──► Test-result attestation (unsigned, attached via oras)
               │
               ▼
-          ARTIFACT_OUTPUTS result
+          ARTIFACT_URI + ARTIFACT_DIGEST results
               │
               ▼
           Tekton Chains generates SLSA provenance
