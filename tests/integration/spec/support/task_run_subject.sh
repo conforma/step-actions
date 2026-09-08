@@ -19,10 +19,21 @@ shellspec_subject_taskrun() {
     fi
 
     if [ -n "${task_run_name}" ]; then
-      local attempt
+      local attempt json
+      # `tkn task start --showlog` returns when the pod finishes, but the
+      # controller writes .status.results (and .status.steps[].results) during
+      # a final reconcile a moment later. Poll until the TaskRun reaches a
+      # terminal Succeeded condition so results are guaranteed populated;
+      # otherwise a fast describe races the controller and sees null results.
       # shellcheck disable=SC2034
-      for attempt in 1 2 3 4 5; do
-        SHELLSPEC_SUBJECT="$(tkn tr describe "${task_run_name}" -o json 2>/dev/null)" && break
+      for attempt in $(seq 1 30); do
+        json="$(tkn tr describe "${task_run_name}" -o json 2>/dev/null)" || { sleep 2; continue; }
+        if printf '%s\n' "${json}" | jq --exit-status \
+            '.status.conditions[]? | select(.type=="Succeeded") | .status != "Unknown"' \
+            > /dev/null 2>&1; then
+          SHELLSPEC_SUBJECT="${json}"
+          break
+        fi
         sleep 2
       done
       if [ -z "${SHELLSPEC_SUBJECT:-}" ]; then

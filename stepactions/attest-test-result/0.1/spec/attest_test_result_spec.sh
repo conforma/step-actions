@@ -24,10 +24,11 @@ extract_script() {
   script="$(mktemp)"
 
   # Extract the script from the StepAction YAML, replacing the Tekton
-  # result path variable with a shell variable reference so the test
-  # can point it at a temp file.
+  # result path variables with shell variable references so the test
+  # can point them at temp files.
   yq -r '.spec.script' "${stepaction_path}" \
-      | sed 's|$(step.results.TEST_OUTPUT_ARTIFACT_OUTPUTS.path)|${RESULT_FILE}|g' \
+      | sed -e 's|$(step.results.ARTIFACT_URI.path)|${URI_RESULT_FILE}|g' \
+            -e 's|$(step.results.ARTIFACT_DIGEST.path)|${DIGEST_RESULT_FILE}|g' \
       > "${script}"
 
   chmod +x "${script}"
@@ -42,7 +43,8 @@ cleanup+=("${attest_script}")
 
 testdir() {
     testdir="$(mktemp -d)" && cleanup+=("${testdir}") && cd "${testdir}"
-    export RESULT_FILE="${testdir}/result.json"
+    export URI_RESULT_FILE="${testdir}/uri"
+    export DIGEST_RESULT_FILE="${testdir}/digest"
     AfterEach 'rm -rf "$testdir"'
 }
 
@@ -252,7 +254,7 @@ Describe "oras discover"
         When call "${attest_script}"
         The status should be success
         The output should include "=== Attestation Complete ==="
-        The contents of file "${RESULT_FILE}" should satisfy jq_field_eq '.digest' 'sha256:primary-digest'
+        The contents of file "${DIGEST_RESULT_FILE}" should equal 'sha256:primary-digest'
     End
 
     It "fails when no attestation digest can be discovered"
@@ -274,7 +276,8 @@ Describe "oras discover"
         When call "${attest_script}"
         The status should be failure
         The output should include "ERROR: Could not discover attestation digest"
-        The contents of file "${RESULT_FILE}" should equal '{"uri":"","digest":""}'
+        The contents of file "${URI_RESULT_FILE}" should equal ''
+        The contents of file "${DIGEST_RESULT_FILE}" should equal ''
     End
 End
 
@@ -282,7 +285,7 @@ End
 Describe "result output"
     BeforeEach testdir
 
-    It "writes JSON with correct uri and digest"
+    It "writes plain strings with correct uri and digest"
         default_env
         Mock select-oci-auth
             echo '{"auths":{"quay.io":{"auth":"dGVzdDp0ZXN0"}}}'
@@ -301,7 +304,7 @@ Describe "result output"
         When call "${attest_script}"
         The status should be success
         The output should include "=== Attestation Complete ==="
-        The contents of file "${RESULT_FILE}" should satisfy jq_field_eq '.uri' 'quay.io/org/image'
-        The contents of file "${RESULT_FILE}" should satisfy jq_field_eq '.digest' 'sha256:attested-abc123'
+        The contents of file "${URI_RESULT_FILE}" should equal 'quay.io/org/image'
+        The contents of file "${DIGEST_RESULT_FILE}" should equal 'sha256:attested-abc123'
     End
 End

@@ -8,7 +8,7 @@ metadata:
 spec:
   description: |
     Example task demonstrating how to use the create-test-result-attestation StepAction.
-    Runs a test, then creates a signed in-toto attestation for the results.
+    Runs a test, then creates an unsigned in-toto attestation for the results.
 
   params:
     - name: IMAGE_URL
@@ -26,20 +26,18 @@ spec:
     - name: TEST_OUTPUT
       description: JSON summary of the test results
       type: string
-    - name: TEST_OUTPUT_ARTIFACT_OUTPUTS
+    - name: ARTIFACT_URI
       description: |
-        Reference to the test-result attestation pushed to registry.
+        URI of the image the test-result attestation was attached to.
         Tekton Chains will include this in the SLSA provenance attestation.
-      type: object
-      properties:
-        uri: {}
-        digest: {}
-
-  workspaces:
-    - name: cosign-keys
+      type: string
+      value: $(steps.create-attestation.results.ARTIFACT_URI)
+    - name: ARTIFACT_DIGEST
       description: |
-        Workspace containing cosign.key for signing the attestation.
-        Mount from a Secret containing the signing key.
+        Digest of the pushed test-result attestation.
+        Tekton Chains will include this in the SLSA provenance attestation.
+      type: string
+      value: $(steps.create-attestation.results.ARTIFACT_DIGEST)
 
   steps:
     - name: run-test
@@ -92,5 +90,3 @@ spec:
           value: $(params.TEST_NAME)
         - name: test-output
           value: $(steps.run-test.results.TEST_OUTPUT)
-        - name: cosign-key-path
-          value: $(workspaces.cosign-keys.path)/cosign.key
