@@ -1,0 +1,69 @@
+---
+name: Release
+
+"on":
+  workflow_run:
+    workflows: [ShellSpec Tests]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  info:
+    name: Info
+    runs-on: ubuntu-latest
+    outputs:
+      head_sha: ${{ steps.head_sha.outputs.head_sha }}
+      timestamp: ${{ steps.timestamp.outputs.timestamp }}
+
+    steps:
+      - name: Git Info
+        id: head_sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "head_sha=$(gh api /repos/conforma/step-actions/git/matching-refs/heads/main --jq '.[0].object.sha')" >> "$GITHUB_OUTPUT"
+      - name: Timestamp
+        id: timestamp
+        run: echo "timestamp=$(date '+%s')" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: info
+    if: ${{ (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_sha == needs.info.outputs.head_sha) || github.event_name == 'workflow_dispatch' }}
+    env:
+      BUNDLE_REPO: quay.io/conforma/step-actions
+      BUNDLE_TAG: gh-${{ needs.info.outputs.head_sha }}
+      BUNDLE_TAG_TIMESTAMP: ${{ needs.info.outputs.head_sha }}-${{ needs.info.outputs.timestamp }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.info.outputs.head_sha }}
+
+      - name: Install Tekton CLI
+        run: |
+          TKN_VERSION=$(curl -s https://api.github.com/repos/tektoncd/cli/releases/latest | jq -r .tag_name)
+          curl -LO "https://github.com/tektoncd/cli/releases/download/${TKN_VERSION}/tkn_${TKN_VERSION#v}_Linux_x86_64.tar.gz"
+          tar xzf "tkn_${TKN_VERSION#v}_Linux_x86_64.tar.gz" tkn
+          sudo mv tkn /usr/local/bin/tkn
+
+      - name: Registry login
+        run: podman login -u ${{ secrets.BUNDLE_PUSH_USER_CONFORMA }} -p ${{ secrets.BUNDLE_PUSH_PASS_CONFORMA }} quay.io
+
+      - name: Create and push the StepAction bundle
+        run: |
+          mapfile -t step_actions < <(find stepactions -type f -name '*.yaml' -print | sort)
+          test "${#step_actions[@]}" -gt 0
+          bundle_args=()
+          for step_action in "${step_actions[@]}"; do
+            bundle_args+=(-f "$step_action")
+          done
+          tkn bundle push "$BUNDLE_REPO:$BUNDLE_TAG" "${bundle_args[@]}" --annotate org.opencontainers.image.revision="$BUNDLE_TAG"
+          skopeo copy "docker://$BUNDLE_REPO:$BUNDLE_TAG" "docker://$BUNDLE_REPO:snapshot"
+          skopeo copy "docker://$BUNDLE_REPO:$BUNDLE_TAG" "docker://$BUNDLE_REPO:$BUNDLE_TAG_TIMESTAMP"
